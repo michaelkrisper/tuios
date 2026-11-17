@@ -63,6 +63,9 @@
 
 static char out[2048];
 static int olen;
+// --cols N: the bar is N text columns wide. Tabs then share what the status
+// leaves free: every label is cut or centre-padded to the same width.
+static int barcols, statcols;       // statcols: visible width of the last status
 
 static void put(const char *s) {
     int n = (int)strlen(s);
@@ -514,7 +517,23 @@ static void render(long cpu, long rxr, long txr) {
 static char prev[sizeof out];
 static int prevlen = -1;
 
+// Visible width of the status in columns: markup skipped, an entity is one
+// column, a Private Use Area icon (rendered larger) counts as two.
+static int visible_cols(const char *s, int n) {
+    int c = 0;
+    for (int i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)s[i];
+        if (ch == '<') { while (i < n && s[i] != '>') i++; continue; }
+        if (ch == '&') { while (i < n && s[i] != ';') i++; c++; continue; }
+        if (ch == '\n' || (ch & 0xC0) == 0x80) continue;
+        int pua = (ch == 0xEE || ch == 0xEF) || ch == 0xF3;   // U+E000-F8FF, U+F0000+
+        c += pua ? 2 : 1;
+    }
+    return c;
+}
+
 static int emit(int nl) {
+    statcols = visible_cols(out, olen);
     if (nl) put("\n");
     if (olen == prevlen && memcmp(out, prev, (size_t)olen) == 0) return 0;
     memcpy(prev, out, (size_t)olen); prevlen = olen;
@@ -681,6 +700,8 @@ static char *ipc_call(int fd, uint32_t type, const char *msg) {
 #define MAXWS 64
 #define MAXLEAF 64
 #define MAXLEN 28                   // tab label, see label()
+static int labmax = MAXLEN, labfill;
+#define TABPAD 2                    // swaybar's button padding, in columns
 
 // tiling windows of a subtree, most recently focused first
 static void leaves(int node, int *out, int *n) {
@@ -734,17 +755,22 @@ static void label(char *dst, size_t cap, const char *t) {
     for (const char *p = t; *p; p++) if ((*p & 0xC0) != 0x80) cps++;
     const char *p = t, *end = t + strlen(t);
     size_t o = 0;
-    if (cps > MAXLEN && !tail) {
-        size_t skip = cps - (MAXLEN - 1);
+    size_t max = (size_t)labmax;
+    if (cps > max && !tail) {
+        size_t skip = cps - (max - 1);
         while (skip) { p++; while ((*p & 0xC0) == 0x80) p++; skip--; }
         memcpy(dst, "\xE2\x80\xA6", 3); o = 3;           // …
-    } else if (cps > MAXLEN) {
+    } else if (cps > max) {
         end = t;
-        for (size_t k = 0; k < MAXLEN - 1; k++) { end++; while ((*end & 0xC0) == 0x80) end++; }
+        for (size_t k = 0; k < max - 1; k++) { end++; while ((*end & 0xC0) == 0x80) end++; }
     }
+    size_t lead = 0;
+    if (labfill && cps < max) lead = (max - cps) / 2;
+    for (size_t k = 0; k < lead && o + 4 < cap; k++) dst[o++] = ' ';
     for (; p < end && o + 4 < cap; p++)
         dst[o++] = *p == '"' ? '\'' : *p == '\\' ? '/' : *p == '\n' ? ' ' : *p;
     if (end < t + strlen(t) && o + 4 <= cap) { memcpy(dst + o, "\xE2\x80\xA6", 3); o += 3; }
+    for (size_t k = lead + cps; labfill && k < max && o + 4 < cap; k++) dst[o++] = ' ';
     dst[o] = 0;
 }
 
@@ -876,6 +902,17 @@ static void tidy(int fd, const char *change, double con, int start) {
         root = jroot(tree); nws = workspaces(root, ws);
     }
     cmdlen = 0; cmdbuf[0] = 0;
+    labmax = MAXLEN; labfill = 0;
+    if (barcols) {
+        int tabs = 0;
+        for (int i = 0; i < nws; i++) { int lv[MAXLEAF], n = 0; leaves(ws[i], lv, &n); tabs += n > 0; }
+        if (tabs) {
+            labmax = (barcols - statcols) / tabs - TABPAD;
+            if (labmax < 4) labmax = 4;
+            if (labmax > 190) labmax = 190;
+            labfill = 1;
+        }
+    }
     for (int i = 0; i < nws; i++) {
         int lv[MAXLEAF], n = 0;
         leaves(ws[i], lv, &n);
@@ -947,6 +984,7 @@ int main(int argc, char **argv) {
         // Interval in seconds, default 5. Less often means: swaybar redraws
         // less often, sway composites less often, the panel may idle longer.
         long secs = argc > 2 ? atol(argv[2]) : 5;
+        if (argc > 4 && strcmp(argv[3], "--cols") == 0) barcols = atoi(argv[4]);
         if (secs < 1) secs = 1;
         const char *rt = getenv("XDG_RUNTIME_DIR");
         int ino = -1;
