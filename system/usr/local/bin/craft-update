@@ -1,0 +1,21 @@
+#!/bin/bash
+# Updates installed ArtCraft apps from their GitHub releases (storytold/<app>).
+# Checks the signature of SHA256SUMS.txt against the fixed ArtCraft key.
+set -u
+FPR=2B76741B414AAD6CD33E631213A005C0B9D7C3ED
+W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+export GNUPGHOME=$W/gnupg; mkdir -m700 "$GNUPGHOME"
+for a in wordcraft gridcraft deckcraft photocraft vectorcraft pdfcraft; do
+    cur=$(pacman -Q ai.storyteller.$a 2>/dev/null | awk '{print $2}' | sed 's/-[0-9]*$//') || continue
+    [ -n "$cur" ] || continue
+    t=$(gh release view -R storytold/$a --json tagName -q .tagName) || { echo "$a: kein Release"; continue; }
+    v=${t#v}
+    [ "$v" = "$cur" ] && { echo "$a aktuell ($cur)"; continue; }
+    d=$W/$a; mkdir "$d"; p="$a-$v-linux-x86_64.pkg.tar.zst"
+    gh release download -R storytold/$a "$t" -D "$d" -p "$p" -p SHA256SUMS.txt -p SHA256SUMS.txt.asc -p release-signing-key.asc || continue
+    gpg -q --import "$d/release-signing-key.asc" 2>/dev/null
+    gpg --status-fd 1 --verify "$d/SHA256SUMS.txt.asc" "$d/SHA256SUMS.txt" 2>/dev/null | grep -q "VALIDSIG .* $FPR\$" \
+        || { echo "$a: SIGNATUR UNGUELTIG, uebersprungen"; continue; }
+    (cd "$d" && grep " $p\$" SHA256SUMS.txt | sha256sum -c --quiet -) || { echo "$a: Pruefsumme falsch"; continue; }
+    sudo -n pacman -U --noconfirm "$d/$p" && echo "$a: $cur -> $v"
+done

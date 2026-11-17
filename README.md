@@ -1,49 +1,49 @@
-# tuios-fedora
+# tuios
 
-[![CI](https://github.com/michaelkrisper/tuios-fedora/actions/workflows/ci.yml/badge.svg)](https://github.com/michaelkrisper/tuios-fedora/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/github/v/tag/michaelkrisper/tuios-fedora?sort=semver&label=version)](https://github.com/michaelkrisper/tuios-fedora/releases)
+[![CI](https://github.com/michaelkrisper/tuios/actions/workflows/ci.yml/badge.svg)](https://github.com/michaelkrisper/tuios/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/github/v/tag/michaelkrisper/tuios?sort=semver&label=version)](https://github.com/michaelkrisper/tuios/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Language: C](https://img.shields.io/badge/language-C-555.svg)](src/)
-[![Fedora 44](https://img.shields.io/badge/Fedora-44-51a2da.svg)](SETUP.md)
+[![Arch Linux](https://img.shields.io/badge/Arch_Linux-rolling-1793d1.svg)](SETUP.md)
 
-Versioned TTY kiosk for a MacBook Pro on Fedora: sway tabs, `foot --server`
-and two dependency-free C programs instead of a desktop environment.
+Versioned TTY kiosk for a MacBook Pro 11,1 on Arch Linux: barebone base, sway
+tabs, `foot --server`, Claude Code in the first terminal, and one
+dependency-free C program for the bar.
 
-A MacBook Pro 11,1 running Fedora that boots straight into a terminal — no
-desktop, no compositor chrome, no session manager. Every window gets its
-own sway workspace, and the workspace buttons in swaybar act as tabs next to
-the status line — terminals are `footclient` windows of a
-single `foot --server`, Chrome sits next to them as just another tab — and two small
-C programs fill the gaps the desktop used to cover: a status line and a daemon
-for the laptop's special keys.
+The machine boots a unified kernel image straight from the firmware (no boot
+loader), logs in on tty1 and starts sway, whose first window runs Claude Code.
+Every window gets its own sway workspace, and the workspace buttons in swaybar
+act as tabs that share the bar's width next to the status line. Networking is
+`wpa_supplicant` plus `systemd-networkd`; there is no desktop, no
+NetworkManager, no audio and no display manager. About 350 packages, idle draw
+around 5.2 W at low brightness.
 
-The point is what it does *not* run. Plasma cost roughly 5.7 % of a core
-continuously for kwin and plasmashell alone; dropping it took idle draw down
-noticeably on a battery this old. What is left boots in about 15 seconds into
-974 MiB of used RAM.
+Until 2026-11 this repo was `tuios-fedora` and described the same kiosk on
+Fedora 44; that state lives on in the git history (last Fedora commit
+`d013be3`).
 
 ```
- 53%  ↓0.0 ↑12.4 󰁹78% 1:35h 21.9W  12:41
+ 53%  ↓0.0 ↑12.4 󰁹78% 1:35h  6W  12:41
 ```
 
 ## What is in here
 
 | | |
 |---|---|
-| `src/swaybar-status.c` | the one bar: tabs (one window per workspace, named after its title), optional Claude weekly limit, CPU, RAM, network, battery, WLAN, volume, clock — dependency-free C |
-| `src/specialkeysd.c` | brightness, keyboard backlight, idle dimming, and the Exposé/Dashboard keys |
-| `home/config/sway/config` | bar with tabs + status, foot server, touchpad |
-| `home/config/tty-claude.sh` | tty1 autostart: sway, then Claude Code in the first terminal |
-| `system/.../specialkeysd.service` | runs the daemon as root, because `/dev/input` and backlight need it |
+| `src/swaybar-status.c` | the one bar: tabs (one window per workspace, named after its title, sharing the free width with `--cols`), optional Claude weekly limit, CPU, RAM, network, battery, WLAN, clock — dependency-free C |
+| `home/config/sway/config` | bar with tabs + status, foot server, touchpad, brightness keys |
+| `home/bash_profile` | tty1 autostart: `exec sway` |
+| `system/etc/` | kernel command line, mkinitcpio (UKI), networkd + wpa_supplicant, autologin, udev, auto-update timer |
+| `system/usr/local/` | `auto-update.sh` (pacman, AUR Chrome, Craft apps, Python, Rust, Android SDK) and `craft-update` |
+| `packages.txt` | explicitly installed packages (`pacman -Qqe`) |
 | `home/`, `system/` | every other config the machine runs, mirroring `~` and `/` |
 
-[`SETUP.md`](SETUP.md) documents how to reproduce the whole thing on a fresh Fedora.
+[`SETUP.md`](SETUP.md) documents how to reproduce the whole thing.
 
 ## Build
 
 ```sh
-make && make install          # -> ~/.local/bin
-make install-daemon           # -> /usr/local/sbin, needs sudo
+make && make install          # -> ~/.local/bin, then swaymsg reload
 ```
 
 `make install` also runs `swaymsg reload`: swaybar keeps the old binary running
@@ -57,15 +57,13 @@ workspace is renamed "N:<window title>" (the bar strips the number), and
 closing the last window of the visible workspace jumps to the previous tab.
 The window title is the working directory (bash `PROMPT_COMMAND`). The Claude
 weekly limit appears only while `$XDG_RUNTIME_DIR/claude-bar/limits` exists;
-inotify on that directory redraws immediately. `claude-usage.timer` (user unit,
-every 5 min) writes it: `home/local/bin/claude-usage` asks the account-wide usage
-endpoint with Claude Code's OAuth token, logs each reading to
-`~/.local/state/claude-usage/history.tsv` and renders gauge, percent and
-`→ ~N%`, the projection to the weekly reset. The projection blends this week's
-pace with the median final usage of past logged weeks, weighted towards the
-history on the first day; without logged weeks it is the pace alone, marked `?`
-below one day. Enable with
-`systemctl --user enable --now claude-usage.timer`.
+inotify on that directory redraws immediately. The writer for that file
+(`claude-usage`, a user timer) lived here in the Fedora days and is not part of
+the Arch setup yet.
+
+With `--cols N` (N = bar width in text columns) the tabs share whatever the
+status leaves free: every tab label is cut or centre-padded to the same width,
+so the buttons fill the bar. Without it labels are cut at 28 characters.
 
 * **CPU** — busy percentage over the last interval, from `/proc/stat`. Turns
   red at 70 %.
@@ -84,10 +82,9 @@ below one day. Enable with
   as the last scan: this kernel has no `/proc/net/wireless`, and the `wl` driver
   answers `GET_STATION` with EPERM unless root. The interface name (`wlp3s0`) is
   fixed in the source.
-* **Volume** — speaker with zero to three waves, grey and crossed out when muted
-  or at 0 %, from `wpctl get-volume`. At 13 ms that is the one fork in the
-  program, so it runs only at start and when a volume key binding sends sway's
-  `volume` tick; changes made without a key show up on the next press.
+* **Volume** — speaker with zero to three waves from `wpctl get-volume`, run
+  only at start and on sway's `volume` tick. The Arch setup has no audio, so
+  `wpctl` is missing and the field stays hidden.
 
 Colours are [Catppuccin Mocha](https://github.com/catppuccin/catppuccin).
 
@@ -107,48 +104,29 @@ be overridden at build time:
 make CFLAGS='-O2 -DBATDIR=\"/sys/class/power_supply/BAT1/\"'
 ```
 
-## specialkeysd
-
-Booting into a bare sway session means nothing handles the laptop's special
-keys any more — powerdevil and kglobalaccel used to. `specialkeysd` takes over:
-display and keyboard brightness, dimming after an idle timeout, and the
-Exposé/Dashboard keys (F3 = next tab, F4 = new terminal). It reads `/dev/input`
-directly and writes `/sys/class/backlight`, so it runs as root and drops to the
-desktop user to call `swaymsg` (socket found by globbing
-`/run/user/UID/sway-ipc.*.sock`).
-
-The idle timeout is 30 minutes on battery and 60 on AC (`ExecStart` in the
-unit). Anything that writes text without touching a keyboard — the m5assistant
-dictation, which types without a keyboard — counts as
-activity by touching `$XDG_RUNTIME_DIR/specialkeysd-wake`; the daemon only
-looks at the mtime and wakes the screen within five seconds.
-
-Keys must be handled in exactly one place. Binding one of them in the
-compositor as well means two actions per press — the comments in the sway config
-record both times that happened, once for brightness and once for Exposé.
-
 ## Notes
 
 Code, comments and documentation are in English; the few user-facing strings
-(systemd unit descriptions, the output of `resume-check`) are German, the
-machine's UI language.
+(systemd unit descriptions, script output) are German, the machine's UI
+language.
 
-The glyphs (, 󰁹, 󰂄) come from a Nerd Font — the bar font needs one to render
-them.
+The glyphs (, 󰁹, 󰂄) come from a Nerd Font. Use the proportional variant
+(`CaskaydiaMono NFP`) for the bar: in the plain `NF` variant the icons are wider
+than their advance and overlap the digits. All icons share one span
+(`ICON_SPAN`: 12pt, rise -2pt) that centres them on the digits.
 
 ## Development
 
-Both programs are dependency-free C and build on Linux with gcc or clang:
+The bar is dependency-free C and builds on Linux with gcc or clang:
 
 ```sh
 make CFLAGS='-O2 -Wall -Wextra -Werror'   # what CI builds with (gcc and clang)
 make test                                  # unit tests in tests/
-shellcheck home/local/bin/bl ...           # all shell scripts, see .github/workflows/ci.yml
+shellcheck home/bash_profile ...           # shell scripts, see .github/workflows/ci.yml
 ```
 
 The tests include the program sources directly, so they can reach the static
-helpers (formatting, the sway JSON parser and tree walk, the brightness step
-table) without changing the programs.
+helpers (formatting, the sway JSON parser and tree walk) without changing the programs.
 
 CI tags every merge to `main` with the next patch version; bundled releases
 with release notes come from the Release workflow. Changes go through issues

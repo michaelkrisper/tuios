@@ -1,46 +1,31 @@
-# Successor of the cage kiosk: same idea (foot fullscreen), but with window
-# switching and a clipboard shared by all clients.
-# Since 2026-11-01 without tmux: every terminal is its own foot window, and all
-# windows (graphical ones like Chrome too) are tabs in the bar.
+# Every window lives on its own workspace; swaybar-status shows them as tabs.
+# Brightness via brightnessctl here (no key daemon), no audio.
 
 set $mod Mod4
-# One foot server for all windows: fonts and glyph cache exist only once.
-# Separate foot processes cost ~36 MB each, a footclient window only its
-# scrollback.
+# One foot server for all windows: fonts and glyph cache only once.
 set $term footclient
-set $browser ~/.local/bin/google-chrome-stable --ozone-platform-hint=auto
+set $browser google-chrome-stable --ozone-platform-hint=auto
 
-# Windows are stacked as tabs instead of side by side: each one is full size.
 workspace_layout tabbed
-# 1 px frame around every window. Only visible in tiled mode (Ctrl+Fn+F3):
-# hide_edge_borders smart drops it while a workspace holds a single window.
 default_border pixel 1
-# --i3 hides the tab title bar while there is only one window in the tabbed
-# container -- a single foot looks exactly like it did under cage.
 hide_edge_borders --i3 smart
-font pango:Cascadia Mono NF 8
-# No swaybg: every window is fullscreen, the background is never visible --
-# saves the process (8 MB) and its fullscreen buffer.
+font pango:CaskaydiaMono NF 8
 swaybg_command -
-
 focus_follows_mouse no
-# Scale 2 (Retina): all clients render at normal size, no per-app flags.
 output eDP-1 scale 2
 
-# Touchpad: tap to click (libinput has tap off by default).
-# Two fingers = right button, three = middle.
-input "1452:602:bcm5974" {
+input type:keyboard {
+    xkb_layout de
+    xkb_variant mac
+}
+input type:touchpad {
     tap enabled
     tap_button_map lrm
-    # Scroll direction as on macOS: content follows the fingers.
     natural_scroll enabled
-    # dwt is the libinput default, only spelled out here.
     dwt enabled
 }
 
-# Tabs are workspaces (see bar below).
-# Tick instead of "workspace next_on_output": in tiled mode (Ctrl+Fn+F3) there
-# is only one workspace, swaybar-status then cycles the windows.
+# Switch tabs: tick to swaybar-status (it manages the workspaces).
 bindsym Mod1+Tab       exec swaymsg -q -t send_tick next
 bindsym Mod1+Shift+Tab exec swaymsg -q -t send_tick prev
 bindsym $mod+Tab       exec swaymsg -q -t send_tick next
@@ -50,52 +35,29 @@ bindsym $mod+Right     focus right
 bindsym $mod+Return    exec $term
 bindsym $mod+c         exec $term bash -lc 'claude; exec bash -l'
 bindsym $mod+b         exec $browser
-bindsym $mod+e         exec $term yazi
-bindsym $mod+d         exec fuzzel
 bindsym $mod+q         kill
 bindsym $mod+f         fullscreen toggle
 bindsym $mod+Shift+c   reload
 bindsym $mod+Shift+e   exec swaymsg exit
-
-# Ctrl+Fn+F3: tabs <-> tiled (autotiling) (swaybar-status handles the tick "split").
-# Fn makes the key a plain F3, so specialkeysd (KEY_SCALE only) never sees it.
+# Ctrl+Fn+F3: tabs <-> tiles (swaybar-status handles the "split" tick).
 bindsym Control+F3     exec swaymsg -t send_tick split
 
-# KEY_SCALE/KEY_DASHBOARD (F3 next, F4 new terminal) are deliberately NOT bound
-# here: specialkeysd reads /dev/input directly and sends swaymsg. Two layers on
-# the same key mean two actions per press.
+# Brightness: F1/F2 display, F5/F6 keyboard. -e = exponential, fine steps at the low end.
+bindsym --locked XF86MonBrightnessDown exec brightnessctl -q -e -n1 -d intel_backlight set 5%-
+bindsym --locked XF86MonBrightnessUp   exec brightnessctl -q -e -d intel_backlight set 5%+
+bindsym --locked XF86KbdBrightnessDown exec brightnessctl -q -d smc::kbd_backlight set 10%-
+bindsym --locked XF86KbdBrightnessUp   exec brightnessctl -q -d smc::kbd_backlight set 10%+
 
-# Brightness is handled by specialkeysd (system service, reads /dev/input
-# directly) -- deliberately NO bindings here. With both, every key press did
-# two things: sway's linear 5-point steps and specialkeysd's fine step table;
-# the results added up (1 % + 5 % = 6 %) and the lower end got stuck at 5 %.
-
-# Volume via wpctl: pactl is not installed here, and specialkeysd leaves these
-# keys alone, so nothing fires twice. The tick tells swaybar-status to re-read
-# the volume; otherwise it only reads it at start.
-set $sink @DEFAULT_AUDIO_SINK@
-set $voltick swaymsg -q -t send_tick volume
-bindsym --locked XF86AudioMute        exec wpctl set-mute $sink toggle && $voltick
-bindsym --locked XF86AudioLowerVolume exec wpctl set-volume $sink 10%- && $voltick
-bindsym --locked XF86AudioRaiseVolume exec wpctl set-volume -l 1.0 $sink 10%+ && $voltick
-
-# Tabs in the Catppuccin look of the former tmux bar.
 #                       border  backgr.   text    indicator child_border
 client.focused          #89b4fa #89b4fa   #1e1e2e #89b4fa   #89b4fa
 client.focused_inactive #181825 #181825   #cdd6f4 #45475a   #45475a
 client.unfocused        #181825 #181825   #a6adc8 #45475a   #45475a
 
-# One bar, as with tmux before: tabs on the left; CPU, network, battery, clock
-# on the right. The tabs are workspace buttons -- swaybar-status puts every
-# window on its own workspace "N:title", strip_workspace_numbers hides the "N:".
-# sway's own tab bar is no use for this: it is a second bar above the window
-# with no room for the status.
 bar {
-    font pango:Cascadia Mono NF 10
-    # Fixed height, independent of the icon sizes in the status.
+    font pango:CaskaydiaMono NFP 10
     height 24
     position bottom
-    status_command ~/.local/bin/swaybar-status --loop 5
+    status_command ~/.local/bin/swaybar-status --loop 5 --cols 160
     pango_markup enabled
     strip_workspace_numbers yes
     binding_mode_indicator no
@@ -111,8 +73,6 @@ bar {
     }
 }
 
-# Initial window: foot with Claude (stage 2 of tty-claude.sh). Only this one
-# gets the kiosk stage -- further terminals (Super+Return) are a plain shell,
-# Super+C another Claude.
+# Start: foot server, then one window running Claude Code.
 exec foot --server
-exec sh -c 'until [ -S "$XDG_RUNTIME_DIR/foot-$WAYLAND_DISPLAY.sock" ]; do sleep 0.05; done; AUTOCLAUDE_STAGE=kiosk exec footclient -E'
+exec sh -c 'until [ -S "$XDG_RUNTIME_DIR/foot-$WAYLAND_DISPLAY.sock" ]; do sleep 0.05; done; exec footclient bash -lc "claude; exec bash -l"'

@@ -1,392 +1,204 @@
-# Reproducing this setup
+# Setup
 
-Target hardware: MacBook Pro 11,1 (2013, Haswell, BCM4360 wifi, Cirrus audio,
-FaceTime HD camera), Fedora 44. Everything below is what the machine actually
-runs, not an idealised version of it — the file tree under `home/` and
-`system/` mirrors the real paths.
+How to reproduce the kiosk on a MacBook Pro 11,1 (13", late 2013: i5-4258U,
+8 GB, Iris 5100, BCM4360 WLAN). The goal is a barebone Arch: start with almost
+nothing and add only what turns out to be missing. Files under `system/` and
+`home/` are copies of the live files at `/` and `~`; nothing installs them
+automatically.
 
-Anything Fedora-specific is marked **[fedora]**; the rest ports to another
-distribution unchanged, which is the point of the split.
+Placeholders in angle brackets (`<SSID>`, `<IP>`, `<Router-IP>`, the PSK) stand
+for local values that do not belong in a public repo.
 
----
+## 1. Disk and base system
 
-## 0. Layout of this repo
-
-```
-src/                  the two C programs
-tests/                their unit tests (make test)
-home/                 user files; home/config/x  ->  ~/.config/x
-home/bash_profile     ->  ~/.bash_profile      (loads the kiosk starter)
-home/local/bin/       ->  ~/.local/bin
-home/cargo/           ->  ~/.cargo
-system/               root-owned files, mirroring / — copy with sudo
-```
-
-The live machine runs copies of the files under `home/` and `system/`
-(installed with the `cp` commands below), not symlinks into this repo. The two
-programs are built from `src/` and installed with `make install` and
-`make install-daemon`. A config change made here therefore has to be applied
-at the live path too, and vice versa.
-
----
-
-## 1. Packages **[fedora]**
+One btrfs partition holds everything. Arch lives in its own subvolumes, so it
+can be installed next to another system on the same partition and booted
+without touching it:
 
 ```sh
-sudo dnf install -y \
-  sway foot fuzzel \
-  cascadia-mono-nf-fonts terminus-fonts-console \
-  brightnessctl wl-clipboard grim slurp kbd \
-  tlp powertop thermald pciutils zram-generator grubby \
-  NetworkManager-wifi \
-  git gh ripgrep fd-find bat eza fzf jq htop git-delta
-sudo dnf copr enable -y lihaohong/yazi && sudo dnf install -y yazi
+mount -o subvolid=5 /dev/sda3 /mnt/top
+btrfs subvolume create /mnt/top/arch
+btrfs subvolume create /mnt/top/arch-home
+btrfs property set /mnt/top/arch compression none       # no compression, no snapshots
+btrfs property set /mnt/top/arch-home compression none
 ```
 
-Wifi needs the out-of-tree Broadcom driver — the BCM4360 has no in-kernel
-support: `akmod-wl` + `broadcom-wl` from RPM Fusion. This is the one piece that
-makes resume slow (~8.4 s) and cannot be fixed from here.
+The property is needed because a compress mount option of another system on
+the same filesystem would otherwise apply to these subvolumes too.
 
-`mbpfan` (fan control) is built from source, there is no RPM.
-
-`tlp` replaced the hand-written power units on 2026-09-20; its config lives in
-`/etc/tlp.d/01-mbp.conf` (see step 7). `tlp.service` is `Type=oneshot` and
-udev-triggered, so nothing sits resident. **Mask `tlp-pd.service`** — the
-package ships a PowerProfiles D-Bus daemon (35 MB of Python) that `disable`
-alone does not stop, because D-Bus activates it again.
-
-`pipewire`/`wireplumber` are installed but masked, see step 6. `cage` was
-removed on 2026-09-20; sway had been the only thing actually running for
-months.
-
----
-
-## 2. Boot into a terminal, not a desktop
+The base can be installed from any running Linux with the official bootstrap
+tarball (verify `archlinux-bootstrap-x86_64.tar.zst.sig` with the release key
+first), then `arch-chroot` into it and `pacstrap` into the mounted subvolume.
+The first install was:
 
 ```sh
-systemctl set-default multi-user.target          # no display manager
-sudo install -Dm644 system/etc/systemd/system/getty@tty1.service.d/autologin.conf \
-     /etc/systemd/system/getty@tty1.service.d/autologin.conf
+pacstrap -K /mnt base linux linux-headers intel-ucode broadcom-wl-dkms \
+    wpa_supplicant sudo terminus-font git sway foot ttf-cascadia-mono-nerd ttf-dejavu
 ```
 
-The drop-in makes `agetty` log the user in on tty1 without a prompt. From
-there the chain is:
+Arch has no prebuilt `broadcom-wl` any more, so the `wl` driver comes as DKMS,
+which pulls in the kernel headers and gcc. `iwd` does not work with `wl`.
+`packages.txt` has the full current list (`pacman -Qqe`); `google-chrome` and
+the `ai.storyteller.*` packages are not in the repos (sections 7 and 8).
 
-```
-tty1 login -> ~/.bash_profile -> ~/.config/tty-claude.sh
-      stage 1   on /dev/tty1, no WAYLAND_DISPLAY:  AUTOCLAUDE_STAGE=done sway
-      sway      config execs:                      foot --server, then
-                                                   AUTOCLAUDE_STAGE=kiosk footclient -E
-      stage 2   the login shell sources the script again, sees "kiosk",
-                and starts claude
-```
+Then, inside the new system: `system/etc/fstab`, `hostname`, `locale.conf`
+(plus `locale-gen`), `vconsole.conf` (Terminus 32 for the Retina console,
+`mac-de-latin1`), timezone, user `michi` in `wheel`, a sudoers drop-in and
+`passwd -l root`.
 
-`AUTOCLAUDE_STAGE` is what keeps the script from recursing into itself when it
-is sourced a second and third time. `touch ~/.no-sway` drops you straight
-into claude on the text console. Copy both files:
+## 2. Boot without a boot loader
+
+mkinitcpio builds a unified kernel image directly onto the EFI partition, and
+the firmware starts it:
+
+- `system/etc/mkinitcpio.d/linux.preset`: only the `default` preset, written
+  as `/efi/EFI/arch/linux.efi`.
+- `system/etc/kernel/cmdline`: root subvolume plus the power options carried
+  over from Fedora (`mem_sleep_default=deep`, `pcie_aspm.policy=powersave`,
+  PSR/FBC, `thunderbolt.hosts_only=1`, `acpi_osi=!Darwin`).
+- `system/etc/mkinitcpio.conf`: the default hooks without `fsck`. btrfs has
+  no fsck helper, and with the hook mkinitcpio ends every build with "errors
+  were encountered".
 
 ```sh
-cp home/config/tty-claude.sh ~/.config/tty-claude.sh
-cp home/bash_profile ~/.bash_profile      # sources the above at the end
+mkinitcpio -P
+efibootmgr -c -d /dev/sda -p 1 -L Arch -l '\EFI\arch\linux.efi'
 ```
 
-Two things this depends on and that are easy to get wrong:
+Holding Alt at power-on brings up the Mac boot picker if something goes wrong.
 
-* `login-shell=yes` in `foot.ini` — otherwise foot starts a non-login shell,
-  `.bash_profile` never runs, and stage 2 never happens.
-* The script must not loop. When Claude exits you land in a plain shell; a
-  restart loop makes the machine unusable over ssh-less serial.
+## 3. Network
 
-Escape hatches, created with `touch`, deliberately not in this repo:
-`~/.no-sway`, `~/.no-autoclaude`.
+`wpa_supplicant@wlp3s0` associates, `systemd-networkd` configures, and
+`systemd-resolved` resolves (`/etc/resolv.conf` -> `stub-resolv.conf`):
 
-`home/local/bin/bootmode` switches the default target between tty
-(`multi-user.target`) and KDE (`graphical.target`). Plasma was uninstalled on
-2026-09-20, so the `kde` branch no longer leads to a desktop;
-`graphical.target` has no display manager left.
-
----
-
-## 3. The kiosk: sway and foot
+- `system/etc/wpa_supplicant/wpa_supplicant-wlp3s0.conf`: `update_config=1`,
+  control socket for `wheel`, so new networks can be added with `wpa_cli`.
+  The home network is limited to 2.4 GHz (`freq_list`/`scan_freq`): its 5 GHz
+  band is too weak at the desk, and after every resume the attempt ran into a
+  10 s authentication timeout before falling back (reconnect 17.5 s -> 3.3 s).
+- `system/etc/systemd/network/20-wlan-home.network`: static address for the
+  home SSID (reserved at the router), `IgnoreCarrierLoss=yes`, so the address
+  survives suspend and no DHCP round trip follows the resume.
+- `system/etc/systemd/network/25-wlan.network`: DHCP for every other SSID.
 
 ```sh
-mkdir -p ~/.config/sway ~/.config/foot
-cp home/config/sway/config ~/.config/sway/config
-cp home/config/foot/foot.ini ~/.config/foot/foot.ini
+systemctl enable systemd-networkd systemd-resolved systemd-timesyncd wpa_supplicant@wlp3s0
 ```
 
-Every window gets its own workspace: `swaybar-status` moves new windows to a
-fresh one and names it "N:<title>"; with `strip_workspace_numbers` the
-workspace buttons in swaybar become tabs, next to the status line -- one bar,
-like tmux had. (sway's own tabbed title bar is a second bar above the window
-with no room for status.)
-Terminals are `footclient` windows of one `foot --server`, so fonts and glyph
-cache exist once (~7 MB per extra window instead of ~36 MB per foot process).
-The server dying takes all terminals with it -- there is no detach like tmux had.
+Never `modprobe -r wl` to test something: `wpa_supplicant` keeps running with a
+stale nl80211 handle and every scan fails until reboot (or
+`systemctl restart wpa_supplicant@wlp3s0`).
 
-### foot with PGO (optional, measured)
+## 4. Session
 
-Fedora's foot is built without profile-guided optimisation (`foot --version`
-shows `-pgo`). A local PGO build used 19 % less CPU on 20 MB of log output and
-10 % less on foot's colour/scroll stress data (median of 5 runs each, headless
-sway, same foot.ini). It goes to `~/.local/opt`, the package stays as fallback:
+- `system/etc/systemd/system/getty@tty1.service.d/autologin.conf`: autologin.
+- `home/bash_profile`: on tty1 `exec sway`, unless `~/.no-sway` exists.
+- `home/config/sway/config`: `foot --server`, first window runs Claude Code,
+  every window a tab. Brightness keys go through `brightnessctl` (works
+  without root via logind): F1/F2 display, F5/F6 keyboard. `hid_apple`
+  defaults to `fnmode=3`, so they work without Fn.
+- `home/config/foot/foot.ini`, `home/bashrc`, `home/config/starship.toml`.
+
+The bar:
 
 ```sh
-sudo dnf install meson ninja-build scdoc fcft-devel wayland-protocols-devel \
-  utf8proc-devel tllist-devel pixman-devel wayland-devel libxkbcommon-devel
-git clone --depth 1 --branch 1.27.0 https://codeberg.org/dnkl/foot.git ~/.local/src/foot
-cd ~/.local/src/foot
-env -u WAYLAND_DISPLAY CFLAGS="-march=haswell" ./pgo/pgo.sh full-headless-sway . build-pgo \
-  --prefix=$HOME/.local/opt/foot-pgo -Ddocs=disabled -Dtests=false
-# the final build fails with -Werror=missing-profile (tokenize.c has no profile):
-meson configure build-pgo -Dwerror=false && ninja -C build-pgo
-meson install -C build-pgo   # errors at the systemd unit (/usr/lib), binaries are in
-ln -sf ~/.local/opt/foot-pgo/bin/foot ~/.local/opt/foot-pgo/bin/footclient ~/.local/bin/
+make && make install
 ```
 
-`~/.local/bin` comes first in sway's PATH, so the next sway start picks it up.
-dnf no longer updates foot for you: rebuild when Fedora moves past 1.27.0, or
-remove the two symlinks to go back to the package.
+and in the sway config
+`status_command ~/.local/bin/swaybar-status --loop 5 --cols 160` with the bar
+font `CaskaydiaMono NFP 10`. 160 columns is the 1280 px logical width of the
+panel at scale 2.
 
-The console font and keymap matter because
-the plain text console is still there underneath **[fedora]**:
+## 5. Power
 
-```sh
-sudo cp system/etc/vconsole.conf /etc/vconsole.conf     # de-mac, ter-v32n
-sudo cp system/etc/X11/xorg.conf.d/00-keyboard.conf /etc/X11/xorg.conf.d/
-```
+Measured on battery, display at 14 %, keyboard light at 10 %, Claude Code idle
+at its prompt, average of `power_now` over 60 s:
 
-The sway config binds almost nothing on purpose. Special keys are handled by
-`specialkeysd` (step 5) and binding them here too means two actions per press —
-the comments in the config record both times that happened.
-
----
-
-## 4. Status line and keys
-
-```sh
-make && make install                    # swaybar-status -> ~/.local/bin, swaymsg reload
-```
-
-swaybar runs `swaybar-status --loop 5` (Pango output, see README).
-Tab titles inside Claude Code come from Claude Code itself (session topic, with a
-status glyph while it works); `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` must not be set.
-No statusLine command is set; the weekly limit comes from `claude-usage.timer`:
-
-```sh
-cp home/config/systemd/user/claude-usage.* ~/.config/systemd/user/
-install -m755 home/local/bin/claude-usage ~/.local/bin/
-systemctl --user enable --now claude-usage.timer
-```
-
-| | |
+| state | draw |
 |---|---|
-| `Alt-Tab`, `Super-Tab`, Exposé key | next tab (workspace) |
-| Dashboard key, `Super-Return` | new terminal |
-| `Super-C` | new terminal running Claude |
-| `Super-B` | Chrome |
-| Mute, volume keys | `wpctl`, shown in the bar |
+| barebone, untuned | 5.8 W |
+| + WLAN power save | 5.2 W |
 
----
+What was measured and left out:
 
-## 5. specialkeysd
+- Runtime PM `auto` for all PCI devices and SATA: 5.85 / 5.80 / 5.79 W
+  (off/on/off), no effect.
+- The package never reaches C7-C10, with or without the above; the panel has
+  no PSR. Brightness is the remaining lever.
+- `mbpfan`: the SMC firmware runs the fan at ~1300 rpm at idle and ramps it
+  under load by itself.
 
-```sh
-make install-daemon        # -> /usr/local/sbin, unit, enable --now
-```
+Kept: `system/etc/udev/rules.d/81-wlan-powersave.rules` (power save survives
+suspend, tested) and `system/etc/modprobe.d/no-audio.conf` (no audio at all).
+The FaceTime camera has no driver on Arch, so it is off as well.
 
-Without a desktop nothing handles brightness, keyboard backlight, idle dimming
-or the Exposé/Dashboard keys. This daemon reads `/dev/input` directly and
-writes `/sys/class/backlight`, which is why it runs as root and drops to the
-desktop user to call `swaymsg`. `home/local/bin/bl` sets the backlight by percentage from a
-shell.
+Measuring pitfall: while Claude Code runs a tool its spinner redraws ~13 times
+a second and the draw rises to ~9.4 W (package C6 29 % instead of 91 %). Measure
+idle draw only from a background job that starts after the turn has ended.
 
----
+## 6. Development
 
-## 6. Power and hardware
-
-Kernel command line **[fedora]** — `/etc/default/grub` and `/etc/kernel/cmdline`
-must be kept in sync, and BLS entries under `/boot/loader/entries/` are
-regenerated from them:
-
-```
-rhgb quiet mem_sleep_default=deep pcie_aspm.policy=powersave
-i915.enable_psr=2 i915.enable_fbc=1 thunderbolt.hosts_only=1
-acpi_osi=!Darwin intel_pstate=active
-resume=UUID=<root-uuid> resume_offset=<see below>
-```
-
-`acpi_osi=!Darwin` stops the firmware pretending to be macOS; without it the
-generic ACPI battery is replaced by the SBS driver, which reports µAh instead
-of µWh (`swaybar-status` handles both).
-
-Hardware that is switched off because this machine never uses it — camera,
-both audio controllers including the internal microphone, and the Thunderbolt
-controller:
-
-```sh
-sudo cp system/etc/modprobe.d/*.conf /etc/modprobe.d/
-sudo cp system/etc/sysctl.d/99-mbp-tuning.conf /etc/sysctl.d/
-sudo cp system/etc/udev/rules.d/*.rules /etc/udev/rules.d/
-sudo cp system/etc/NetworkManager/conf.d/99-fast-wifi.conf /etc/NetworkManager/conf.d/
-sudo cp system/etc/systemd/zram-generator.conf /etc/systemd/
-sudo install -Dm644 system/etc/systemd/logind.conf.d/90-powerkey.conf \
-     /etc/systemd/logind.conf.d/90-powerkey.conf
-```
-
-Services and helper scripts:
-
-```sh
-sudo cp system/usr/local/bin/*.sh /usr/local/bin/
-sudo cp system/etc/systemd/system/*.service system/etc/systemd/system/*.timer \
-     /etc/systemd/system/
-sudo cp system/etc/mbpfan.conf /etc/mbpfan.conf
-sudo systemctl daemon-reload
-sudo systemctl enable --now tlp mbpfan auto-update.timer wlan-deauth
-sudo systemctl mask tlp-pd
-```
-
-| unit | what it does |
-|---|---|
-| `tlp` | governor, `energy_perf_bias=15`, turbo, SATA/PCIe/USB power policy, wifi `power_save` — everything the four hand-written units used to do |
-| `mbpfan` | fan curve; the Apple SMC needs one, nothing else provides it |
-| `auto-update.timer` | daily dnf/flatpak/npm update **[fedora]** |
-| `specialkeysd` | the key daemon from step 5 |
-| `wlan-deauth` | disconnects wifi cleanly at shutdown; NetworkManager exits without deauthenticating, so the access point would keep a stale station |
-
-Suspend hooks go to `/usr/lib/systemd/system-sleep/`, **not** `/etc/systemd/`:
-SELinux labels files under `/etc` as `etc_t`, `systemd-sleep` refuses to run
-them, and the denial is `dontaudit`ed — so it fails completely silently
-**[fedora]**. They must also be executable; a non-executable hook is skipped
-just as silently.
-
-```sh
-sudo cp system/usr/lib/systemd/system-sleep/* /usr/lib/systemd/system-sleep/
-sudo chmod +x /usr/lib/systemd/system-sleep/*
-```
-
-The proprietary `wl` driver has three quirks that matter for the home wifi:
-
-- It cannot join WPA2/WPA3 mixed networks: NetworkManager always offers
-  `WPA-PSK-SHA256` as well, and `wl` rejects the association, which nmcli
-  reports misleadingly as "network could not be found". The access point has
-  to run plain WPA2-PSK.
-- Without an explicit disconnect the access point keeps a stale station and
-  can ignore new authentication until its inactivity timer fires, so the next
-  connect hangs. Before suspend and hibernate NetworkManager already
-  deauthenticates on its own; at shutdown it just exits, which is what
-  `wlan-deauth.service` covers. Keep NetworkManager from giving up while
-  reconnecting:
+- Node and npm from the repos. Do not run `npm update -g`: it replaces
+  pacman's npm files.
+- Rust via `rustup`; `home/cargo/config.toml` trades a little speed for much
+  faster local builds: debug info reduced, release without LTO and with 16
+  codegen units and incremental builds (a rebuild after a change 0.4 s instead
+  of 19 s on ttycast; sudoku solvers 0-2 % slower, binaries ~23 % larger).
+  `cargo build --profile release-full` restores full optimisation for
+  benchmarks.
+- Python: the repos lag behind, so the newest CPython comes from `uv` into
+  `/opt/python` with links in `/usr/local/bin` (ahead of `/usr/bin` in PATH;
+  pacman's python stays untouched):
 
   ```sh
-  sudo nmcli con mod <ssid> 802-11-wireless-security.pmf disable \
-       connection.autoconnect-retries 0 connection.auth-retries 0 \
-       connection.autoconnect-priority 10
+  UV_PYTHON_INSTALL_DIR=/opt/python UV_PYTHON_BIN_DIR=/usr/local/bin \
+      uv python install 3.15 --default --preview
   ```
-- Never `modprobe -r wl` to recover it: the reload crashes the driver
-  (`Scan_results error (-22)`) and wifi stays dead until a reboot.
 
-Closing the lid hibernates instead of suspending. zram cannot hold a
-hibernation image, so an 8 GiB swapfile sits in its own btrfs subvolume at
-priority 0 (zram keeps priority 100 for normal swapping). The swapfile needs
-the SELinux type `swapfile_t` or logind reports that hibernation is unavailable
-**[fedora]**. `resume_offset` depends on where the file lands on disk, so it
-has to be read out again on every new install; the value in the repo's cmdline
-applies only to this machine:
+- Java: `jdk-openjdk` (newest release).
+- Android SDK in `/opt/android-sdk`, owned by the user so `sdkmanager` and AGP
+  can install into it without root; `system/etc/profile.d/android.sh` sets
+  `ANDROID_HOME`. Older projects point `sdk.dir` at `~/Android/Sdk`, which is a
+  symlink to it. Start from the command-line tools zip (checksum from
+  `repository2-3.xml`), then `sdkmanager --licenses` and install
+  `platform-tools`, the newest `platforms;android-*`, `build-tools` and `ndk`;
+  Gradle fetches anything else a project needs. Rust on Android additionally
+  needs `rustup target add aarch64-linux-android` and `cargo install cargo-ndk`.
 
-```sh
-sudo btrfs subvolume create /var/swap
-sudo btrfs filesystem mkswapfile --size 8G /var/swap/swapfile
-sudo semanage fcontext -a -t swapfile_t '/var/swap(/.*)?'
-sudo restorecon -Rv /var/swap
-echo '/var/swap/swapfile none swap defaults,pri=0 0 0' | sudo tee -a /etc/fstab
-sudo swapon -a
-sudo cp system/etc/dracut.conf.d/resume.conf /etc/dracut.conf.d/
-sudo dracut -f --regenerate-all
-sudo grubby --update-kernel=ALL --args="resume=UUID=$(findmnt -no UUID /) \
-     resume_offset=$(sudo btrfs inspect-internal map-swapfile -r /var/swap/swapfile)"
-sudo install -Dm644 system/etc/systemd/logind.conf.d/91-lid-hibernate.conf \
-     /etc/systemd/logind.conf.d/91-lid-hibernate.conf
-sudo systemctl reload systemd-logind
-```
+## 7. Browser
 
-### Rust dev builds (optional, measured)
-
-On four cores, debug info is a large share of a Rust test build.
-`home/cargo/config.toml` keeps line tables for workspace crates (panic
-backtraces still show file and line), drops debug info for dependencies and
-adds `--profile debugging` for full debug info. Release profiles are not
-touched. On a large workspace (one edited file, `cargo test --no-run`): 13.4 s
-to 9.7 s, linking 2.7 s to 1.0 s, test binary 437 MB to 164 MB. The first
-build after the change rebuilds everything once.
+Google Chrome rather than Chromium, so the profile and Google sync carry over.
+It comes from the AUR PKGBUILD, which only repackages Google's own .deb:
 
 ```sh
-install -Dm644 home/cargo/config.toml ~/.cargo/config.toml
+git clone https://aur.archlinux.org/google-chrome.git && cd google-chrome
+makepkg -si
 ```
 
-Ruled out: mold (since Rust 1.90, x86_64 Linux already links with
-`rust-lld`; linking is about 1 s), sccache (does not cache incremental
-workspace crates). Cranelift, `-Zthreads` and `resolver.feature-unification`
-need nightly.
+## 8. Craft apps
 
-## 7. Services that are switched off
+WordCraft, GridCraft, DeckCraft, PhotoCraft, VectorCraft and PdfCraft publish
+Arch packages in their GitHub releases (`storytold/<app>`). `craft-update`
+installs newer ones after checking the signature of `SHA256SUMS.txt` against
+the fixed ArtCraft key and the checksum of the package. Without XWayland
+installed they all run as native Wayland clients.
 
-Masked system-wide (each is a symlink to `/dev/null`):
+`home/config/mimeapps.list` makes them the default for their file types (PDF
+-> PdfCraft, raster images -> PhotoCraft, SVG -> VectorCraft) and Chrome the
+default for web links.
 
-```
-abrtd alsa-restore alsa-state avahi-daemon cups geoclue iio-sensor-proxy
-ModemManager packagekit passim pcscd rtkit-daemon switcheroo-control
-```
+## 9. Updates
 
-Masked in the user session — no audio stack at all, which is consistent with
-the audio hardware being removed from the bus:
-
-```
-pipewire pipewire.socket pipewire-pulse pipewire-pulse.socket wireplumber
-obex at-spi-dbus-bus kunifiedpush-distributor plasma-startupsound
-```
+Arch has no official counterpart to Debian's `unattended-upgrades` and
+recommends updating by hand. This machine updates itself anyway:
+`auto-update.timer` (daily 12:00, catches up after sleep) runs
+`/usr/local/sbin/auto-update.sh`: `pacman -Syu`, the AUR Chrome package,
+`craft-update`, `uv python upgrade`, `rustup update` and `sdkmanager --update`.
+Reboots stay manual; after a kernel update the script creates
+`/run/reboot-needed`. Log: `journalctl -u auto-update`.
 
 ```sh
-sudo systemctl mask abrtd alsa-restore alsa-state avahi-daemon cups geoclue \
-     iio-sensor-proxy ModemManager packagekit passim pcscd rtkit-daemon \
-     switcheroo-control
-systemctl --user mask pipewire pipewire.socket pipewire-pulse \
-     pipewire-pulse.socket wireplumber obex at-spi-dbus-bus \
-     kunifiedpush-distributor plasma-startupsound
+systemctl enable --now auto-update.timer
 ```
-
-`plasmalogin.service` stays enabled but never starts, because it is wanted by
-`graphical.target` and the default target is `multi-user.target`. That is how
-`home/local/bin/bootmode` could switch back to a desktop without reinstalling
-anything (as long as Plasma is installed).
-
----
-
-## 8. Known open points
-
-* **Resume takes ~8.4 s**, almost all of it in the `wl` wifi driver. Not
-  fixable without replacing the card.
-* **Suspend takes ~9.6 s** in the firmware's `_PTS` method, which polls the
-  camera's power state up to 5000 times. `30-camera-d3` (write the camera to
-  D3 first) and `pci-remove-unused` (drop it off the bus) cancelled each other
-  out, so the idea was never actually tested. Both were deleted on 2026-09-20
-  at the owner's request, together with `40-smt-defer` (which had been saving
-  ~2.3 s per resume) and `50-resume-cpu-boost`. The `_PTS` brake is therefore
-  accepted, not solved. The scripts (and `pci-remove-unused`, `cpu-power`,
-  `powertop-autotune`, which are not enabled either) are kept under `system/`
-  for reference only; the install steps above do not enable them.
-* A DSDT override was considered for the same problem and rejected as too
-  risky for the gain.
-
----
-
-## 9. Porting to another distribution
-
-Unchanged: everything under `home/`, `src/`, the sway/foot
-configuration, the daemon and its unit, the masking lists, the modprobe
-blacklists, sysctl and udev rules.
-
-Needs replacing: the package list and its names, the kernel command line
-mechanism (`/etc/kernel/cmdline` + grubby vs. whatever the target uses), the
-SELinux caveat about sleep-hook locations, and `auto-update.sh`, which is built
-around dnf.

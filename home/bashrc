@@ -1,84 +1,101 @@
-# shellcheck shell=bash
-# .bashrc
+#
+# ~/.bashrc
+#
 
-# Source global definitions
-if [ -f /etc/bashrc ]; then
-    . /etc/bashrc
-fi
+export PATH="$HOME/.local/bin:$PATH"
 
-# User specific environment
-# shellcheck disable=SC2076  # Fedora skeleton: literal substring match
-if ! [[ "$PATH" =~ "$HOME/.local/bin:$HOME/bin:" ]]; then
-    PATH="$HOME/.local/bin:$HOME/bin:$PATH"
-fi
-export PATH
+# If not running interactively, don't do anything
+[[ $- != *i* ]] && return
 
-# Uncomment the following line if you don't like systemctl's auto-paging feature:
-# export SYSTEMD_PAGER=
+# ble.sh: suggestions while typing + syntax highlighting. Load early, attach at the end.
+[[ -f ~/.local/share/blesh/ble.sh ]] && source ~/.local/share/blesh/ble.sh --noattach
 
-# User specific aliases and functions
-if [ -d ~/.bashrc.d ]; then
-    for rc in ~/.bashrc.d/*; do
-        if [ -f "$rc" ]; then
-            . "$rc"
-        fi
-    done
-fi
-unset rc
+# --- History ---------------------------------------------------------------
+HISTSIZE=100000
+HISTFILESIZE=200000
+HISTCONTROL=ignoreboth:erasedups
+shopt -s histappend cmdhist
 
+# --- Shell-Optionen --------------------------------------------------------
+shopt -s autocd cdspell dirspell globstar checkwinsize no_empty_cmd_completion
 
-# Added by Antigravity CLI installer
-export PATH="/home/michi/.local/bin:$PATH"
+export EDITOR=nano
+export VISUAL=nano
+export MANPAGER="sh -c 'col -bx | bat -l man -p'"
+export MANROFFOPT="-c"
+export BAT_THEME="Catppuccin Mocha"
+export LESS="-R --mouse"
 
-# Low-priority test runner
-alias run-tests="nice -n 19 ionice -c 3 pytest -n 2"
-. "$HOME/.cargo/env"
+[[ -r /usr/share/bash-completion/bash_completion ]] && . /usr/share/bash-completion/bash_completion
 
-# JDK for Gradle/DrillDown builds
-export JAVA_HOME="$HOME/.jdks/jdk-21.0.11+10"
-export PATH="$JAVA_HOME/bin:$PATH"
-
-export ANDROID_HOME="$HOME/Android/Sdk"
-export PATH="$ANDROID_HOME/platform-tools:$PATH"
-
-export DOTNET_ROOT="$HOME/.dotnet"
-export PATH="$HOME/.dotnet:$PATH"
-
-# The next line updates PATH for the Google Cloud SDK.
-if [ -f '/home/michi/.local/share/google-cloud-sdk/path.bash.inc' ]; then . '/home/michi/.local/share/google-cloud-sdk/path.bash.inc'; fi
-
-# The next line enables shell command completion for gcloud.
-if [ -f '/home/michi/.local/share/google-cloud-sdk/completion.bash.inc' ]; then . '/home/michi/.local/share/google-cloud-sdk/completion.bash.inc'; fi
-
-# --- fzf -------------------------------------------------------------------
-# Alt-C   cd into a subdirectory (fuzzy search)
-# Ctrl-R  search command history
-# Ctrl-F  insert a file path into the command line
-# Ctrl-F instead of fzf's default Ctrl-T (tmux used to grab that; the binding
-# stayed).
-if command -v fzf >/dev/null; then
+# --- fzf (Ctrl-T Dateien, Alt-C Ordner, **<Tab>) ---------------------------
+export FZF_DEFAULT_COMMAND='fd --type f --hidden --exclude .git'
+export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+export FZF_ALT_C_COMMAND='fd --type d --hidden --exclude .git'
+export FZF_DEFAULT_OPTS="--height 50% --layout reverse --border rounded --info inline-right \
+--color=bg+:#313244,spinner:#f5e0dc,hl:#f38ba8,fg:#cdd6f4,header:#f38ba8,info:#cba6f7 \
+--color=pointer:#f5e0dc,marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8,border:#585b70"
+export FZF_CTRL_T_OPTS="--preview 'bat -n --color=always --line-range :200 {}'"
+export FZF_ALT_C_OPTS="--preview 'eza --tree --level 2 --icons --color=always {}'"
+_fzf_compgen_path() { fd --hidden --exclude .git . "$1"; }
+_fzf_compgen_dir() { fd --type d --hidden --exclude .git . "$1"; }
+# Under ble.sh use its fzf integration: ble.sh misreads the macros from
+# `fzf --bash` (Alt-C) and opens the editor.
+if [[ ${BLE_VERSION-} ]]; then
+    _ble_contrib_fzf_base=/usr/share/fzf
+    ble-import -d integration/fzf-completion
+    ble-import -d integration/fzf-key-bindings
+else
     eval "$(fzf --bash)"
-    bind -m emacs-standard -x '"\C-f": fzf-file-widget'
-    # fd instead of find: faster and honours .gitignore by itself
-    export FZF_ALT_C_COMMAND='fd --type d --hidden --exclude .git --exclude node_modules'
-    export FZF_CTRL_T_COMMAND='fd --type f --hidden --exclude .git --exclude node_modules'
-    export FZF_DEFAULT_OPTS='--height=60% --layout=reverse --border --info=inline'
-    export FZF_ALT_C_OPTS='--preview "ls -1 --color=always {} | head -60"'
-    export FZF_CTRL_T_OPTS='--preview "bat --style=numbers --color=always --line-range=:60 {} 2>/dev/null || ls -la {}"'
 fi
 
-# Window title = working directory, "<path>: <command>" while a command runs.
-# swaybar-status shows it as a tab and uses the part before ": " to look up the
-# tab's Claude values (statusline --bar writes "<path>: <session title>").
-# The DEBUG trap fires before every simple command; __title_armed makes sure
-# only the first one after the prompt sets the title.
-__title() { printf '\e]2;%s\a' "${PWD/#$HOME/\~}"; __title_armed=1; }
-__title_cmd() {
-    [ -n "$__title_armed" ] || return 0
-    __title_armed=
-    printf '\e]2;%s: %s\a' "${PWD/#$HOME/\~}" "${BASH_COMMAND//[[:cntrl:]]/ }"
+# --- zoxide: z <teil>, zi = interaktiv ------------------------------------
+eval "$(zoxide init bash)"
+
+# --- atuin: Ctrl-R History-Suche (Pfeil-hoch bleibt normal) ----------------
+eval "$(atuin init bash --disable-up-arrow)"
+
+# --- Aliase ----------------------------------------------------------------
+alias ls='eza --icons --group-directories-first'
+alias ll='eza -l --icons --git --group-directories-first --time-style=relative'
+alias la='eza -la --icons --git --group-directories-first --time-style=relative'
+alias lt='eza --tree --level 2 --icons'
+alias cat='bat -pp'
+alias grep='grep --color=auto'
+alias diff='diff --color=auto'
+alias ip='ip -color=auto'
+alias ..='cd ..'
+alias ...='cd ../..'
+alias g='git'
+alias gs='git status -sb'
+alias gl='git log --oneline --graph --decorate -20'
+alias gd='git diff'
+
+# mkdir + cd
+mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
+
+# pick a project with fzf and cd into it
+p() {
+    local d
+    d=$(fd --type d --hidden --max-depth 3 '^\.git$' ~ --exec dirname {} \; 2>/dev/null \
+        | sort | fzf --preview 'eza --tree --level 1 --icons --color=always {}') && cd "$d"
 }
-trap __title_cmd DEBUG
-# A separate, last element: otherwise systemd's PROMPT_COMMAND hook
-# (80-systemd-osc-context.sh) consumes __title_armed and ends up in the title.
-PROMPT_COMMAND+=(__title)
+
+# yazi: on exit, cd into the directory it showed last
+y() {
+    local tmp cwd
+    tmp=$(mktemp -t yazi-cwd.XXXXXX)
+    yazi "$@" --cwd-file="$tmp"
+    cwd=$(<"$tmp")
+    [[ -n $cwd && $cwd != "$PWD" ]] && cd -- "$cwd"
+    rm -f -- "$tmp"
+}
+alias lg='lazygit'
+alias ghd='gh dash'
+
+eval "$(direnv hook bash)"
+
+# --- Prompt ----------------------------------------------------------------
+eval "$(starship init bash)"
+
+[[ ${BLE_VERSION-} ]] && ble-attach

@@ -1,0 +1,91 @@
+"$schema" = 'https://starship.rs/config-schema.json'
+
+# Greyscale powerline with one accent (directory). Language versions off on purpose.
+format = """
+[](surface0)\
+$os\
+$username\
+[](bg:lavender fg:surface0)\
+$directory\
+[](fg:lavender bg:surface1)\
+$git_branch\
+$git_status\
+[](fg:surface1 bg:surface0)\
+$python\
+$time\
+[ ](fg:surface0)\
+$cmd_duration\
+$line_break\
+$character"""
+
+palette = 'mocha'
+
+[palettes.mocha]
+red = "#f38ba8"
+yellow = "#f9e2af"
+green = "#a6e3a1"
+lavender = "#b4befe"
+text = "#cdd6f4"
+subtext0 = "#a6adc8"
+overlay1 = "#7f849c"
+overlay0 = "#6c7086"
+surface1 = "#45475a"
+surface0 = "#313244"
+crust = "#11111b"
+
+[os]
+disabled = false
+style = "bg:surface0 fg:subtext0"
+
+[os.symbols]
+Arch = "󰣇 "
+Fedora = "󰣛 "
+Linux = "󰌽 "
+
+[username]
+show_always = true
+style_user = "bg:surface0 fg:subtext0"
+style_root = "bg:surface0 fg:red bold"
+format = '[$user ]($style)'
+
+[directory]
+style = "bg:lavender fg:crust bold"
+read_only_style = "bg:lavender fg:red"
+format = "[ $path ]($style)[$read_only]($read_only_style)"
+truncation_length = 3
+truncation_symbol = "…/"
+
+[git_branch]
+symbol = ""
+format = '[ $symbol $branch ](fg:text bg:surface1)'
+
+[git_status]
+format = '[($all_status$ahead_behind )](fg:yellow bg:surface1)'
+
+[python]
+symbol = ""
+format = '[( $symbol $virtualenv )](fg:subtext0 bg:surface0)'
+detect_extensions = []
+detect_files = []
+
+[nodejs]
+disabled = true
+
+[time]
+disabled = false
+time_format = "%R"
+format = '[  $time ](fg:overlay1 bg:surface0)'
+
+[cmd_duration]
+min_time = 2000
+format = "[ $duration]($style) "
+style = "fg:overlay0"
+show_notifications = true
+min_time_to_notify = 45000
+
+[line_break]
+disabled = true
+
+[character]
+success_symbol = '[❯](bold fg:lavender)'
+error_symbol = '[❯](bold fg:red)'

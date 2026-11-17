@@ -1,0 +1,11 @@
+# Home network: the address is reserved at the router -> static, no DHCP after resume.
+[Match]
+Name=wlp3s0
+SSID=<SSID>
+
+[Network]
+Address=<IP>/24
+Gateway=<Router-IP>
+DNS=<Router-IP>
+# Keep the address across suspend and short dropouts instead of tearing it down.
+IgnoreCarrierLoss=yes

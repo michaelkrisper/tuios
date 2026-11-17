@@ -89,8 +89,8 @@ static void test_label(void) {
     char b[200];
     label(b, sizeof b, NULL);
     CHECK_STR(b, "?");
-    label(b, sizeof b, "~/src/tuios-fedora: make test");
-    CHECK_STR(b, "tuios-fedora: make test");
+    label(b, sizeof b, "~/src/tuios: make test");
+    CHECK_STR(b, "tuios: make test");
     label(b, sizeof b, "~/src");
     CHECK_STR(b, "~/src");
     label(b, sizeof b, "say \"hi\" \\ now");

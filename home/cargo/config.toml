@@ -9,3 +9,18 @@ debug = false
 [profile.debugging]
 inherits = "dev"
 debug = true
+
+# Local release builds: fast rather than maximally optimised (4 threads, slow).
+# Config profiles override [profile.release] in Cargo.toml, so this also applies
+# to projects with lto/codegen-units=1. CI still builds with the project values.
+[profile.release]
+lto = false
+codegen-units = 16
+incremental = true
+
+# Full optimisation (benchmarks, size comparisons): cargo build --profile release-full
+[profile.release-full]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+incremental = false

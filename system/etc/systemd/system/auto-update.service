@@ -1,11 +1,10 @@
 [Unit]
-Description=Tägliches Voll-Update (dnf, flatpak, npm, rustup, cargo)
+Description=Taegliche Updates (pacman, AUR-Chrome, Craft-Apps, Python, Rust, Android-SDK, npm)
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/auto-update.sh
-Nice=19
+Nice=10
 IOSchedulingClass=idle
-TimeoutStartSec=2h
