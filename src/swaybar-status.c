@@ -63,6 +63,9 @@
 
 static char out[2048];
 static int olen;
+// --cols N: the bar is N text columns wide. Tabs then share what the status
+// leaves free: every label is cut or centre-padded to the same width.
+static int barcols, statcols;       // statcols: visible width of the last status
 
 static void put(const char *s) {
     int n = (int)strlen(s);
@@ -253,8 +256,14 @@ static void col(const char *span) {
 
 // Icons are hard to see at text size. Bold does not help: the Nerd Font glyphs
 // are identical in every weight of the font.
+// One span for every icon. Nerd Font glyphs sit at the top
+// of the line, so a negative rise centres them on the digits (Proportional
+// variant "CaskaydiaMono NFP": icons keep their real width, no overlap).
+#ifndef ICON_SPAN
+#define ICON_SPAN "<span font_size='12pt' rise='-2pt'>"
+#endif
 static void sym(const char *glyph) {
-    put("<span font_size='14pt'>"); put(glyph); put("</span>");
+    put(ICON_SPAN); put(glyph); put("</span>");
 }
 
 // ---------------------------------------------------------------- Claude
@@ -442,22 +451,20 @@ static void put_wifi(void) {
 static void render(long cpu, long rxr, long txr) {
     olen = 0; inspan = 0;
     put_limits();
-    pad(cpu < 0 ? 1 : 3 - digits(cpu));
     col(cpu >= 70 ? FG("#f38ba8") : FG("#89b4fa"));
-    // CPU and battery fill more of the em than the other icons: at 14pt they stand
-    // 4 and 7 px above the digits. 12pt and text size match the digits' height.
-    put("<span font_size='12pt'></span>");
+    sym("");
     if (cpu < 0) put("--"); else putnum(cpu, 0);
-    put("%"); col(NULL); put(" ");
+    // Padding after the number, not before the icon: the bar is right-aligned,
+    // so padding in front would move the icon whenever the digit count changes.
+    put("%"); pad(cpu < 0 ? 1 : 3 - digits(cpu)); col(NULL); put(" ");
     char mi[512];
     long mem = slurp("/proc/meminfo", mi, sizeof mi) ? mem_pct(mi) : -1;
-    pad(mem < 0 ? 1 : 3 - digits(mem));
     col(mem >= 90 ? FG("#f38ba8") : FG("#cba6f7"));
     // nf-md-chip: a flat bar with pins reads as a RAM module; nf-md-memory is a
-    // square chip that looks just like the CPU icon. 12pt for the same reason as CPU.
-    put("<span font_size='12pt'>\U000F061A</span>");
+    // square chip that looks just like the CPU icon.
+    sym("\U000F061A");
     if (mem < 0) put("--"); else putnum(mem, 0);
-    put("%"); col(NULL); put(" ");
+    put("%"); pad(mem < 0 ? 1 : 3 - digits(mem)); col(NULL); put(" ");
     pad(2 - ratewidth(rxr));
     col(FG("#94e2d5")); put("↓"); putrate(rxr);
     put(" "); pad(2 - ratewidth(txr)); put("↑"); putrate(txr);
@@ -474,12 +481,11 @@ static void render(long cpu, long rxr, long txr) {
         long rest = dis ? en : ef - en;
         long avg = smooth_power(pw, dis);
 
-        padnum(cap, 3);
         int crit = dis && cap < 15;             // red background up to the end of the line
         col(crit ? "<span foreground='#1e1e2e' background='#f38ba8'>"
                  : dis && cap <= 30 ? FG("#fab387") : FG("#a6e3a1"));
-        put(dis ? "󰁹" : "󰂄");
-        putnum(cap, 0); put("%");
+        sym(dis ? "󰁹" : "󰂄");
+        putnum(cap, 0); put("%"); padnum(cap, 3);
         // Remaining time rounded to 5 min so the display does not twitch
         // every tick. If a value is missing the field is left blank.
         if (avg > 0 && rest > 0) {
@@ -501,7 +507,8 @@ static void render(long cpu, long rxr, long txr) {
     put_volume();
     time_t t = time(NULL); struct tm tm;
     localtime_r(&t, &tm);
-    put(" "); putnum(tm.tm_hour, 2);
+    // Hour without leading zero; the pad keeps the bar width (and every icon) fixed.
+    put(" "); padnum(tm.tm_hour, 2); putnum(tm.tm_hour, 0);
     put(":"); putnum(tm.tm_min, 2); put(" ");
 }
 
@@ -510,7 +517,23 @@ static void render(long cpu, long rxr, long txr) {
 static char prev[sizeof out];
 static int prevlen = -1;
 
+// Visible width of the status in columns: markup skipped, an entity is one
+// column, a Private Use Area icon (rendered larger) counts as two.
+static int visible_cols(const char *s, int n) {
+    int c = 0;
+    for (int i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)s[i];
+        if (ch == '<') { while (i < n && s[i] != '>') i++; continue; }
+        if (ch == '&') { while (i < n && s[i] != ';') i++; c++; continue; }
+        if (ch == '\n' || (ch & 0xC0) == 0x80) continue;
+        int pua = (ch == 0xEE || ch == 0xEF) || ch == 0xF3;   // U+E000-F8FF, U+F0000+
+        c += pua ? 2 : 1;
+    }
+    return c;
+}
+
 static int emit(int nl) {
+    statcols = visible_cols(out, olen);
     if (nl) put("\n");
     if (olen == prevlen && memcmp(out, prev, (size_t)olen) == 0) return 0;
     memcpy(prev, out, (size_t)olen); prevlen = olen;
@@ -677,6 +700,8 @@ static char *ipc_call(int fd, uint32_t type, const char *msg) {
 #define MAXWS 64
 #define MAXLEAF 64
 #define MAXLEN 28                   // tab label, see label()
+static int labmax = MAXLEN, labfill;
+#define TABPAD 2                    // swaybar's button padding, in columns
 
 // tiling windows of a subtree, most recently focused first
 static void leaves(int node, int *out, int *n) {
@@ -730,17 +755,22 @@ static void label(char *dst, size_t cap, const char *t) {
     for (const char *p = t; *p; p++) if ((*p & 0xC0) != 0x80) cps++;
     const char *p = t, *end = t + strlen(t);
     size_t o = 0;
-    if (cps > MAXLEN && !tail) {
-        size_t skip = cps - (MAXLEN - 1);
+    size_t max = (size_t)labmax;
+    if (cps > max && !tail) {
+        size_t skip = cps - (max - 1);
         while (skip) { p++; while ((*p & 0xC0) == 0x80) p++; skip--; }
         memcpy(dst, "\xE2\x80\xA6", 3); o = 3;           // …
-    } else if (cps > MAXLEN) {
+    } else if (cps > max) {
         end = t;
-        for (size_t k = 0; k < MAXLEN - 1; k++) { end++; while ((*end & 0xC0) == 0x80) end++; }
+        for (size_t k = 0; k < max - 1; k++) { end++; while ((*end & 0xC0) == 0x80) end++; }
     }
+    size_t lead = 0;
+    if (labfill && cps < max) lead = (max - cps) / 2;
+    for (size_t k = 0; k < lead && o + 4 < cap; k++) dst[o++] = ' ';
     for (; p < end && o + 4 < cap; p++)
         dst[o++] = *p == '"' ? '\'' : *p == '\\' ? '/' : *p == '\n' ? ' ' : *p;
     if (end < t + strlen(t) && o + 4 <= cap) { memcpy(dst + o, "\xE2\x80\xA6", 3); o += 3; }
+    for (size_t k = lead + cps; labfill && k < max && o + 4 < cap; k++) dst[o++] = ' ';
     dst[o] = 0;
 }
 
@@ -872,6 +902,17 @@ static void tidy(int fd, const char *change, double con, int start) {
         root = jroot(tree); nws = workspaces(root, ws);
     }
     cmdlen = 0; cmdbuf[0] = 0;
+    labmax = MAXLEN; labfill = 0;
+    if (barcols) {
+        int tabs = 0;
+        for (int i = 0; i < nws; i++) { int lv[MAXLEAF], n = 0; leaves(ws[i], lv, &n); tabs += n > 0; }
+        if (tabs) {
+            labmax = (barcols - statcols) / tabs - TABPAD;
+            if (labmax < 4) labmax = 4;
+            if (labmax > 190) labmax = 190;
+            labfill = 1;
+        }
+    }
     for (int i = 0; i < nws; i++) {
         int lv[MAXLEAF], n = 0;
         leaves(ws[i], lv, &n);
@@ -943,6 +984,7 @@ int main(int argc, char **argv) {
         // Interval in seconds, default 5. Less often means: swaybar redraws
         // less often, sway composites less often, the panel may idle longer.
         long secs = argc > 2 ? atol(argv[2]) : 5;
+        if (argc > 4 && strcmp(argv[3], "--cols") == 0) barcols = atoi(argv[4]);
         if (secs < 1) secs = 1;
         const char *rt = getenv("XDG_RUNTIME_DIR");
         int ino = -1;
