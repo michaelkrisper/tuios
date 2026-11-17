@@ -30,16 +30,17 @@ make install          # swaybar-status -> ~/.local/bin, then swaymsg reload
   renamed `N:<title>` (bar strips the number). Key bindings in the sway config talk to it
   through `swaymsg -t send_tick <word>` (`next`, `prev`, `split`, `volume`). Output is
   Pango markup; it writes a line only when the output changed. The Claude weekly limit
-  appears while `$XDG_RUNTIME_DIR/claude-bar/limits` exists (its writer
-  `claude-usage` is not part of the Arch setup yet; inotify triggers a redraw).
+  appears while `$XDG_RUNTIME_DIR/claude-bar/limits` exists (written every 5 min
+  by `home/local/bin/claude-usage` via `claude-usage.timer`; inotify triggers a redraw).
   `--cols N` makes the tab labels share the bar width left free by the status.
   All icons go through `sym()` with one `ICON_SPAN`; the bar font must be the
   proportional Nerd Font variant (`CaskaydiaMono NFP`), or icons overlap the digits.
 - `tests/*.c` `#include` the program source (with `main` renamed) to reach static
   helpers; `tests/check.h` is a tiny counted-assertion harness. No test framework.
 - `home/bash_profile`: tty1 starts sway; the sway config opens Claude Code in the first terminal.
-- `system/usr/local/sbin/auto-update.sh` (daily timer) and `system/usr/local/bin/craft-update`
-  (signature-checked Craft app updates) are the only scripts outside the C program.
+- Scripts outside the C program: `system/usr/local/sbin/auto-update.sh` (daily timer),
+  `system/usr/local/bin/craft-update` (signature-checked Craft app updates) and
+  `home/local/bin/claude-usage` (weekly limit for the bar).
 
 ## Conventions
 
