@@ -253,8 +253,14 @@ static void col(const char *span) {
 
 // Icons are hard to see at text size. Bold does not help: the Nerd Font glyphs
 // are identical in every weight of the font.
+// One span for every icon. Nerd Font glyphs sit at the top
+// of the line, so a negative rise centres them on the digits (Proportional
+// variant "CaskaydiaMono NFP": icons keep their real width, no overlap).
+#ifndef ICON_SPAN
+#define ICON_SPAN "<span font_size='12pt' rise='-2pt'>"
+#endif
 static void sym(const char *glyph) {
-    put("<span font_size='14pt'>"); put(glyph); put("</span>");
+    put(ICON_SPAN); put(glyph); put("</span>");
 }
 
 // ---------------------------------------------------------------- Claude
@@ -442,22 +448,20 @@ static void put_wifi(void) {
 static void render(long cpu, long rxr, long txr) {
     olen = 0; inspan = 0;
     put_limits();
-    pad(cpu < 0 ? 1 : 3 - digits(cpu));
     col(cpu >= 70 ? FG("#f38ba8") : FG("#89b4fa"));
-    // CPU and battery fill more of the em than the other icons: at 14pt they stand
-    // 4 and 7 px above the digits. 12pt and text size match the digits' height.
-    put("<span font_size='12pt'></span>");
+    sym("");
     if (cpu < 0) put("--"); else putnum(cpu, 0);
-    put("%"); col(NULL); put(" ");
+    // Padding after the number, not before the icon: the bar is right-aligned,
+    // so padding in front would move the icon whenever the digit count changes.
+    put("%"); pad(cpu < 0 ? 1 : 3 - digits(cpu)); col(NULL); put(" ");
     char mi[512];
     long mem = slurp("/proc/meminfo", mi, sizeof mi) ? mem_pct(mi) : -1;
-    pad(mem < 0 ? 1 : 3 - digits(mem));
     col(mem >= 90 ? FG("#f38ba8") : FG("#cba6f7"));
     // nf-md-chip: a flat bar with pins reads as a RAM module; nf-md-memory is a
-    // square chip that looks just like the CPU icon. 12pt for the same reason as CPU.
-    put("<span font_size='12pt'>\U000F061A</span>");
+    // square chip that looks just like the CPU icon.
+    sym("\U000F061A");
     if (mem < 0) put("--"); else putnum(mem, 0);
-    put("%"); col(NULL); put(" ");
+    put("%"); pad(mem < 0 ? 1 : 3 - digits(mem)); col(NULL); put(" ");
     pad(2 - ratewidth(rxr));
     col(FG("#94e2d5")); put("↓"); putrate(rxr);
     put(" "); pad(2 - ratewidth(txr)); put("↑"); putrate(txr);
@@ -474,12 +478,11 @@ static void render(long cpu, long rxr, long txr) {
         long rest = dis ? en : ef - en;
         long avg = smooth_power(pw, dis);
 
-        padnum(cap, 3);
         int crit = dis && cap < 15;             // red background up to the end of the line
         col(crit ? "<span foreground='#1e1e2e' background='#f38ba8'>"
                  : dis && cap <= 30 ? FG("#fab387") : FG("#a6e3a1"));
-        put(dis ? "󰁹" : "󰂄");
-        putnum(cap, 0); put("%");
+        sym(dis ? "󰁹" : "󰂄");
+        putnum(cap, 0); put("%"); padnum(cap, 3);
         // Remaining time rounded to 5 min so the display does not twitch
         // every tick. If a value is missing the field is left blank.
         if (avg > 0 && rest > 0) {
@@ -501,7 +504,8 @@ static void render(long cpu, long rxr, long txr) {
     put_volume();
     time_t t = time(NULL); struct tm tm;
     localtime_r(&t, &tm);
-    put(" "); putnum(tm.tm_hour, 2);
+    // Hour without leading zero; the pad keeps the bar width (and every icon) fixed.
+    put(" "); padnum(tm.tm_hour, 2); putnum(tm.tm_hour, 0);
     put(":"); putnum(tm.tm_min, 2); put(" ");
 }
 
