@@ -111,6 +111,17 @@ and in the sway config
 font `CaskaydiaMono NFP 10`. 160 columns is the 1280 px logical width of the
 panel at scale 2.
 
+The Claude weekly limit at the left of the status comes from
+`home/local/bin/claude-usage` (to `~/.local/bin`, needs `jq` and `curl`) and its
+user units in `home/config/systemd/user/`:
+
+```sh
+systemctl --user enable --now claude-usage.timer
+```
+
+Copying `~/.local/state/claude-usage/history.tsv` from an older machine keeps
+the projection's history of past weeks.
+
 ## 5. Power
 
 Measured on battery, display at 14 %, keyboard light at 10 %, Claude Code idle

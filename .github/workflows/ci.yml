@@ -37,7 +37,7 @@ jobs:
         run: |
           shellcheck --version
           shellcheck home/bash_profile system/usr/local/sbin/auto-update.sh \
-            system/usr/local/bin/craft-update
+            system/usr/local/bin/craft-update home/local/bin/claude-usage
 
   # Tags every tested commit on main with the next patch version (vX.Y.Z).
   version:
