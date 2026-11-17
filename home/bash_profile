@@ -1,17 +1,7 @@
 # shellcheck shell=bash
-# .bash_profile
+[[ -f ~/.bashrc ]] && . ~/.bashrc
 
-# Get the aliases and functions
-if [ -f ~/.bashrc ]; then
-    . ~/.bashrc
+# tty1: start sway, with Claude Code in foot. Disable: touch ~/.no-sway
+if [ "$(tty)" = /dev/tty1 ] && [ -z "$WAYLAND_DISPLAY" ] && [ ! -e ~/.no-sway ]; then
+    exec sway
 fi
-
-# User specific environment and startup programs
-
-
-# Added by Antigravity CLI installer
-export PATH="/home/michi/.local/bin:$PATH"
-. "$HOME/.cargo/env"
-
-# Start Claude Code automatically on tty1
-[ -f ~/.config/tty-claude.sh ] && . ~/.config/tty-claude.sh

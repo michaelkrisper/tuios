@@ -1,0 +1,6 @@
+# Every other WLAN (hotspot etc.): DHCP.
+[Match]
+Name=wlp3s0
+
+[Network]
+DHCP=yes

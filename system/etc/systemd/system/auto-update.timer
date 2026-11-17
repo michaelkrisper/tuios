@@ -1,9 +1,9 @@
 [Unit]
-Description=Täglicher Lauf von auto-update.service
+Description=Taegliche Updates
 
 [Timer]
 OnCalendar=*-*-* 12:00
-RandomizedDelaySec=30m
+RandomizedDelaySec=30min
 Persistent=true
 
 [Install]

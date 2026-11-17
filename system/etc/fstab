@@ -1,0 +1,3 @@
+UUID=14ff223d-aba6-4514-8093-1f0fe2cdc2c3 / btrfs subvol=/arch,noatime 0 0
+UUID=14ff223d-aba6-4514-8093-1f0fe2cdc2c3 /home btrfs subvol=/arch-home,noatime 0 0
+UUID=AE93-B72B /efi vfat umask=0077,shortname=winnt 0 2

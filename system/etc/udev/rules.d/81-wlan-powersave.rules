@@ -1,0 +1,2 @@
+# WLAN power save: measured 2026-11-17, -0.6 W at idle, no clear ping penalty.
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="wl*", RUN+="/usr/bin/iw dev $name set power_save on"
