@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 
 # tty1: start sway, with Claude Code in foot. Disable: touch ~/.no-sway
